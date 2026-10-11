@@ -99,6 +99,85 @@ class UNet(nn.Module):
         return self.head(x)
 
 
+def norm_act(channels):
+    """Instance norm followed by leaky ReLU (slope 1e-2), as in Isensee et al."""
+    return nn.Sequential(
+        nn.InstanceNorm2d(channels, affine=True),
+        nn.LeakyReLU(negative_slope=1e-2, inplace=True),
+    )
+
+
+class ContextModule(nn.Module):
+    """
+    Pre-activation residual block: (norm, act, 3x3 conv), dropout,
+    (norm, act, 3x3 conv). The residual sum with the input is done by the
+    caller, so the same module can follow either a stride-1 or stride-2 conv.
+    """
+
+    def __init__(self, channels, dropout=0.3):
+        super().__init__()
+        self.block = nn.Sequential(
+            norm_act(channels),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Dropout2d(dropout),
+            norm_act(channels),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class EncoderLevel(nn.Module):
+    """
+    One encoder level: 3x3 conv (stride 2 to downsample, stride 1 on the
+    first level) followed by a context module, joined by a residual sum.
+    """
+
+    def __init__(self, in_channels, out_channels, stride, dropout=0.3):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+        self.context = ContextModule(out_channels, dropout)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x + self.context(x)
+
+
+class UpsamplingModule(nn.Module):
+    """Double the resolution, then a 3x3 conv that halves the channels."""
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            norm_act(out_channels),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class LocalizationModule(nn.Module):
+    """
+    Applied after concatenating a skip connection: 3x3 conv to recombine the
+    features, then 1x1 conv that halves the channels.
+    """
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
+            norm_act(in_channels),
+            nn.Conv2d(in_channels, out_channels, kernel_size=1),
+            norm_act(out_channels),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
 def count_parameters(model):
     """Number of trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
