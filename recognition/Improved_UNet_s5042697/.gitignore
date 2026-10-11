@@ -6,3 +6,5 @@ __pycache__/
 *.ckpt
 .DS_Store
 runs/
+job_*.out
+job_*.err
