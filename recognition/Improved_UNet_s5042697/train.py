@@ -23,6 +23,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
+from matplotlib.ticker import MaxNLocator
 
 from dataset import CLASS_NAMES, PROSTATE, get_dataloaders
 from modules import ImprovedUNet, UNet, count_parameters
@@ -104,6 +105,8 @@ def plot_history(history, path):
     ax2.axhline(0.75, color="grey", linestyle="--", linewidth=1, label="target (prostate)")
     ax2.set(xlabel="epoch", ylabel="Dice", title="Validation Dice per class", ylim=(0, 1))
     ax2.legend(fontsize=8)
+    for ax in (ax1, ax2):
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)
