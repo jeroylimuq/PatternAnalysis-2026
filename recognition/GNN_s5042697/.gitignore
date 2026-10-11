@@ -1,0 +1,7 @@
+.venv/
+data/
+__pycache__/
+*.pt
+*.pth
+*.ckpt
+.DS_Store
