@@ -32,6 +32,7 @@ from torchvision.transforms import v2
 
 NUM_CLASSES = 6
 CLASS_NAMES = ["background", "body", "bone", "bladder", "rectum", "prostate"]
+BLADDER = 3
 PROSTATE = 5
 IMAGE_SHAPE = (256, 128)
 SPLITS = ("train", "validate", "test")
