@@ -5,6 +5,8 @@
 #   sbatch job_train.sh                                         # full run, Improved U-Net
 #   MODEL=unet sbatch job_train.sh                              # full run, baseline
 #   MODEL=improved EPOCHS=2 LIMIT=500 sbatch --time=00:20:00 job_train.sh   # quick test
+#   MODEL=improved SEED=1 RUN_NAME=improved_s1 sbatch job_train.sh        # repeat with another seed
+#   MODEL=improved RUN_NAME=improved_c32 EXTRA="--base-channels 32" sbatch job_train.sh
 
 #SBATCH --job-name=hipmri-unet
 #SBATCH --partition=comp3710
@@ -19,20 +21,25 @@ set -euo pipefail
 MODEL=${MODEL:-improved}
 EPOCHS=${EPOCHS:-30}
 LIMIT_ARG=${LIMIT:+--limit $LIMIT}
+SEED=${SEED:-42}
+RUN_NAME=${RUN_NAME:-$MODEL}
+EXTRA=${EXTRA:-}
 DATA_ROOT=/home/groups/comp3710/HipMRI_Study_open/keras_slices_data
 
 source "$HOME/miniconda3/bin/activate"
 conda activate torch
 
 echo "Job $SLURM_JOB_ID on $(hostname), started $(date)"
-echo "model=$MODEL epochs=$EPOCHS ${LIMIT_ARG}"
+echo "run=$RUN_NAME model=$MODEL epochs=$EPOCHS seed=$SEED ${LIMIT_ARG} ${EXTRA}"
 nvidia-smi
 
 python train.py \
     --model "$MODEL" \
+    --run-name "$RUN_NAME" \
+    --seed "$SEED" \
     --epochs "$EPOCHS" \
     --data-root "$DATA_ROOT" \
     --num-workers 2 \
-    $LIMIT_ARG
+    $LIMIT_ARG $EXTRA
 
 echo "Finished $(date)"

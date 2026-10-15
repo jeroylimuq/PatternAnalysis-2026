@@ -65,10 +65,11 @@ def parse_args():
 
 def load_model(path, device):
     ckpt = torch.load(path, map_location=device)
-    model = MODELS[ckpt["model"]]().to(device)
+    # Older checkpoints have no kwargs or run name; they used the defaults.
+    model = MODELS[ckpt["model"]](**ckpt.get("kwargs", {})).to(device)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
-    return ckpt["model"], model
+    return ckpt.get("run_name", ckpt["model"]), model
 
 
 def slice_info(path):

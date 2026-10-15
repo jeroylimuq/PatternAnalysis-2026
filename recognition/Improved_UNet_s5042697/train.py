@@ -37,7 +37,12 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", choices=MODELS, default="improved")
     p.add_argument("--data-root", default=os.path.join(HERE, "data", "keras_slices_data"))
-    p.add_argument("--out-dir", default=None, help="defaults to runs/<model>")
+    p.add_argument("--run-name", default=None, help="name for this run; defaults to the model name")
+    p.add_argument("--out-dir", default=None, help="defaults to runs/<run-name>")
+    p.add_argument("--base-channels", type=int, default=None,
+                   help="first-level width (default: 32 for unet, 16 for improved)")
+    p.add_argument("--dropout", type=float, default=None,
+                   help="context-module dropout, improved only (default 0.3)")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=16)
     # Isensee et al. use Adam with lr 5e-4, decayed by 0.985 each epoch.
@@ -116,11 +121,20 @@ def main():
     args = parse_args()
     torch.manual_seed(args.seed)
     device = get_device(args.device)
-    out_dir = args.out_dir or os.path.join(HERE, "runs", args.model)
+    run_name = args.run_name or args.model
+    out_dir = args.out_dir or os.path.join(HERE, "runs", run_name)
     os.makedirs(out_dir, exist_ok=True)
 
     loaders = get_dataloaders(args.data_root, args.batch_size, args.num_workers, limit=args.limit)
-    model = MODELS[args.model]().to(device)
+    # Only pass options that were set, so each model keeps its own defaults.
+    model_kwargs = {}
+    if args.base_channels is not None:
+        model_kwargs["base_channels"] = args.base_channels
+    if args.dropout is not None:
+        if args.model != "improved":
+            raise SystemExit("--dropout only applies to --model improved")
+        model_kwargs["dropout"] = args.dropout
+    model = MODELS[args.model](**model_kwargs).to(device)
     loss_fn = DiceCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.lr_decay)
@@ -148,7 +162,8 @@ def main():
         improved = val_dice[PROSTATE] > best_dice
         if improved:
             best_dice = val_dice[PROSTATE]
-            torch.save({"model": args.model, "state_dict": model.state_dict(), "epoch": epoch}, ckpt_path)
+            torch.save({"model": args.model, "kwargs": model_kwargs, "run_name": run_name,
+                        "seed": args.seed, "state_dict": model.state_dict(), "epoch": epoch}, ckpt_path)
 
         print(f"epoch {epoch:3d}  train {train_loss:.4f}  val {val_loss:.4f}  "
               f"prostate Dice {val_dice[PROSTATE]:.4f}  "
@@ -163,6 +178,9 @@ def main():
     test_loss, meter = evaluate(model, loaders["test"], loss_fn, device)
     test = {
         "model": args.model,
+        "run_name": run_name,
+        "kwargs": model_kwargs,
+        "seed": args.seed,
         "best_epoch": torch.load(ckpt_path, map_location="cpu")["epoch"],
         "test_loss": test_loss,
         "dice": dict(zip(CLASS_NAMES, meter.dice())),
