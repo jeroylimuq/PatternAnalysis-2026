@@ -42,10 +42,10 @@ from matplotlib.colors import ListedColormap
 from torch.utils.data import DataLoader
 
 from dataset import BLADDER, CLASS_NAMES, NUM_CLASSES, PROSTATE, get_datasets
-from modules import ImprovedUNet, UNet
+from modules import CAN, ImprovedUNet, UNet
 from utils import SegmentationMeter, get_device
 
-MODELS = {"unet": UNet, "improved": ImprovedUNet}
+MODELS = {"unet": UNet, "improved": ImprovedUNet, "can": CAN}
 HERE = os.path.dirname(os.path.abspath(__file__))
 _NAME_RE = re.compile(r"case_(\d+)_week_(\d+)_slice_(\d+)")
 

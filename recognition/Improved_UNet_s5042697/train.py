@@ -26,10 +26,10 @@ import torch
 from matplotlib.ticker import MaxNLocator
 
 from dataset import CLASS_NAMES, PROSTATE, get_dataloaders
-from modules import ImprovedUNet, UNet, count_parameters
+from modules import CAN, ImprovedUNet, UNet, count_parameters
 from utils import DiceCELoss, SegmentationMeter, get_device
 
-MODELS = {"unet": UNet, "improved": ImprovedUNet}
+MODELS = {"unet": UNet, "improved": ImprovedUNet, "can": CAN}
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -40,7 +40,7 @@ def parse_args():
     p.add_argument("--run-name", default=None, help="name for this run; defaults to the model name")
     p.add_argument("--out-dir", default=None, help="defaults to runs/<run-name>")
     p.add_argument("--base-channels", type=int, default=None,
-                   help="first-level width (default: 32 for unet, 16 for improved)")
+                   help="first-level width (default: 32 for unet, 16 for improved, 64 for can)")
     p.add_argument("--dropout", type=float, default=None,
                    help="context-module dropout, improved only (default 0.3)")
     p.add_argument("--epochs", type=int, default=30)

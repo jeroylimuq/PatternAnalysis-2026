@@ -12,6 +12,11 @@ residual context modules with dropout, strided-conv downsampling, instance
 norm with leaky ReLU, localization modules in the decoder, and deep
 supervision that sums segmentation maps from three decoder levels.
 
+CAN: 2D Context Aggregation Network (Yu and Koltun, 2016, "Multi-scale
+context aggregation by dilated convolutions"). Instead of shrinking and
+re-growing the image like a U-Net, it stays at full resolution and widens
+its view with dilated 3x3 convolutions whose dilation doubles each layer.
+
 Only PyTorch is used here (no NumPy), as required by the assessment spec.
 """
 
@@ -244,6 +249,55 @@ class ImprovedUNet(nn.Module):
         return self.upscale(seg) + self.seg1(d1)
 
 
+class DilatedConv(nn.Module):
+    """3x3 convolution with the given dilation, then batch norm and ReLU."""
+
+    def __init__(self, in_channels, out_channels, dilation):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                      padding=dilation, dilation=dilation, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class CAN(nn.Module):
+    """
+    2D Context Aggregation Network (Yu and Koltun, 2016).
+
+    A front-end of two ordinary 3x3 convolutions extracts local features,
+    then the context module stacks 3x3 convolutions with dilations
+    (1, 1, 2, 4, 8, 16, 32, 1). Doubling the dilation grows the receptive
+    field exponentially while the feature maps stay at full 256x128
+    resolution, so no detail is lost to downsampling. The paper's context
+    module ends at dilation 16 for its image size; dilation 32 is added so
+    the receptive field (about 135 px) spans the prostate's surroundings in
+    these slices. A 1x1 convolution gives per-pixel class logits.
+
+    Batch norm and ReLU match the baseline U-Net, so the comparison isolates
+    dilated full-resolution context versus encoder-decoder downsampling.
+    """
+
+    DILATIONS = (1, 1, 2, 4, 8, 16, 32, 1)
+
+    def __init__(self, in_channels=1, num_classes=6, base_channels=64):
+        super().__init__()
+        c = base_channels
+        self.front_end = nn.Sequential(
+            DilatedConv(in_channels, c, dilation=1),
+            DilatedConv(c, c, dilation=1),
+        )
+        self.context = nn.Sequential(*[DilatedConv(c, c, d) for d in self.DILATIONS])
+        self.head = nn.Conv2d(c, num_classes, kernel_size=1)
+
+    def forward(self, x):
+        return self.head(self.context(self.front_end(x)))
+
+
 def count_parameters(model):
     """Number of trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -252,7 +306,7 @@ def count_parameters(model):
 if __name__ == "__main__":
     # Shape check: one forward and backward pass on a dummy batch.
     x = torch.randn(2, 1, 256, 128)
-    for model in (UNet(), ImprovedUNet()):
+    for model in (UNet(), ImprovedUNet(), CAN()):
         out = model(x)
         out.mean().backward()
         print(f"{type(model).__name__} output {tuple(out.shape)}, "
