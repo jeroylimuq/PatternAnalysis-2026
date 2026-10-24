@@ -2,9 +2,9 @@
 Train, validate, test and save a segmentation model on HipMRI 2D slices.
 
 Examples:
-    python train.py --model improved --epochs 30
+    python train.py --model can --epochs 30
     python train.py --model unet --epochs 30
-    python train.py --model improved --epochs 2 --limit 64   # smoke test
+    python train.py --model can --epochs 2 --limit 64   # smoke test
 
 Outputs go to runs/<model>/:
     best.pt          weights with the best validation prostate Dice
@@ -26,26 +26,24 @@ import torch
 from matplotlib.ticker import MaxNLocator
 
 from dataset import CLASS_NAMES, PROSTATE, get_dataloaders
-from modules import CAN, ImprovedUNet, UNet, count_parameters
+from modules import CAN, UNet, count_parameters
 from utils import DiceCELoss, SegmentationMeter, get_device
 
-MODELS = {"unet": UNet, "improved": ImprovedUNet, "can": CAN}
+MODELS = {"unet": UNet, "can": CAN}
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", choices=MODELS, default="improved")
+    p.add_argument("--model", choices=MODELS, default="can")
     p.add_argument("--data-root", default=os.path.join(HERE, "data", "keras_slices_data"))
     p.add_argument("--run-name", default=None, help="name for this run; defaults to the model name")
     p.add_argument("--out-dir", default=None, help="defaults to runs/<run-name>")
     p.add_argument("--base-channels", type=int, default=None,
-                   help="first-level width (default: 32 for unet, 16 for improved, 64 for can)")
-    p.add_argument("--dropout", type=float, default=None,
-                   help="context-module dropout, improved only (default 0.3)")
+                   help="first-level width (default: 32 for unet, 64 for can)")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=16)
-    # Isensee et al. use Adam with lr 5e-4, decayed by 0.985 each epoch.
+    # Adam with lr 5e-4 decayed by 0.985 each epoch (Isensee et al., 2017), same for every model.
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--lr-decay", type=float, default=0.985)
     p.add_argument("--weight-decay", type=float, default=1e-5)
@@ -130,10 +128,6 @@ def main():
     model_kwargs = {}
     if args.base_channels is not None:
         model_kwargs["base_channels"] = args.base_channels
-    if args.dropout is not None:
-        if args.model != "improved":
-            raise SystemExit("--dropout only applies to --model improved")
-        model_kwargs["dropout"] = args.dropout
     model = MODELS[args.model](**model_kwargs).to(device)
     loss_fn = DiceCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -159,15 +153,15 @@ def main():
         history["epoch_time"].append(time.time() - start)
 
         # Model selection on validation prostate Dice, the target structure.
-        improved = val_dice[PROSTATE] > best_dice
-        if improved:
+        is_best = val_dice[PROSTATE] > best_dice
+        if is_best:
             best_dice = val_dice[PROSTATE]
             torch.save({"model": args.model, "kwargs": model_kwargs, "run_name": run_name,
                         "seed": args.seed, "state_dict": model.state_dict(), "epoch": epoch}, ckpt_path)
 
         print(f"epoch {epoch:3d}  train {train_loss:.4f}  val {val_loss:.4f}  "
               f"prostate Dice {val_dice[PROSTATE]:.4f}  "
-              f"({history['epoch_time'][-1]:.0f}s){'  *saved' if improved else ''}")
+              f"({history['epoch_time'][-1]:.0f}s){'  *saved' if is_best else ''}")
 
         with open(os.path.join(out_dir, "history.json"), "w") as f:
             json.dump(history, f, indent=2)

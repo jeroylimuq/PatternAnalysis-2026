@@ -2,7 +2,7 @@
 Run trained models on the HipMRI test split and analyse where they fail.
 
 Example:
-    python predict.py --checkpoints runs/unet/best.pt runs/improved/best.pt
+    python predict.py --checkpoints runs/unet/best.pt runs/can/best.pt
 
 For each checkpoint this prints per-class Dice / IoU, prostate Dice by
 anatomical position, false-positive slices and inference latency, and saves
@@ -42,10 +42,10 @@ from matplotlib.colors import ListedColormap
 from torch.utils.data import DataLoader
 
 from dataset import BLADDER, CLASS_NAMES, NUM_CLASSES, PROSTATE, get_datasets
-from modules import CAN, ImprovedUNet, UNet
+from modules import CAN, UNet
 from utils import SegmentationMeter, get_device
 
-MODELS = {"unet": UNet, "improved": ImprovedUNet, "can": CAN}
+MODELS = {"unet": UNet, "can": CAN}
 HERE = os.path.dirname(os.path.abspath(__file__))
 _NAME_RE = re.compile(r"case_(\d+)_week_(\d+)_slice_(\d+)")
 

@@ -2,13 +2,13 @@
 # Slurm job for training on the Rangpur cluster (COMP3710 partition).
 #
 # Submit from this folder. Settings come from environment variables:
-#   sbatch job_train.sh                                         # full run, Improved U-Net
+#   sbatch job_train.sh                                         # full run, CAN
 #   MODEL=unet sbatch job_train.sh                              # full run, baseline
-#   MODEL=improved EPOCHS=2 LIMIT=500 sbatch --time=00:20:00 job_train.sh   # quick test
-#   MODEL=improved SEED=1 RUN_NAME=improved_s1 sbatch job_train.sh        # repeat with another seed
-#   MODEL=improved RUN_NAME=improved_c32 EXTRA="--base-channels 32" sbatch job_train.sh
+#   MODEL=can EPOCHS=2 LIMIT=500 sbatch --time=00:20:00 job_train.sh        # quick test
+#   MODEL=can SEED=1 RUN_NAME=can_s1 sbatch job_train.sh                  # repeat with another seed
+#   MODEL=can RUN_NAME=can_c128 EXTRA="--base-channels 128" sbatch job_train.sh  # wider variant
 
-#SBATCH --job-name=hipmri-unet
+#SBATCH --job-name=hipmri-seg
 #SBATCH --partition=comp3710
 #SBATCH --account=comp3710
 #SBATCH --gres=gpu
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-MODEL=${MODEL:-improved}
+MODEL=${MODEL:-can}
 EPOCHS=${EPOCHS:-30}
 LIMIT_ARG=${LIMIT:+--limit $LIMIT}
 SEED=${SEED:-42}
