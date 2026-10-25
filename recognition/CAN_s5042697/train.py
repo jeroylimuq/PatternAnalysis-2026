@@ -26,10 +26,10 @@ import torch
 from matplotlib.ticker import MaxNLocator
 
 from dataset import CLASS_NAMES, PROSTATE, get_dataloaders
-from modules import CAN, UNet, count_parameters
+from modules import CAN, ResidualCAN, UNet, count_parameters
 from utils import DiceCELoss, SegmentationMeter, get_device
 
-MODELS = {"unet": UNet, "can": CAN}
+MODELS = {"unet": UNet, "can": CAN, "can_res": ResidualCAN}
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -40,7 +40,7 @@ def parse_args():
     p.add_argument("--run-name", default=None, help="name for this run; defaults to the model name")
     p.add_argument("--out-dir", default=None, help="defaults to runs/<run-name>")
     p.add_argument("--base-channels", type=int, default=None,
-                   help="first-level width (default: 32 for unet, 64 for can)")
+                   help="first-level width (default: 32 for unet, 64 for can and can_res)")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=16)
     # Adam with lr 5e-4 decayed by 0.985 each epoch (Isensee et al., 2017), same for every model.

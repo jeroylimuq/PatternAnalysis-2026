@@ -10,6 +10,10 @@ context aggregation by dilated convolutions"). Instead of shrinking and
 re-growing the image like a U-Net, it stays at full resolution and widens
 its view with dilated 3x3 convolutions whose dilation doubles each layer.
 
+ResidualCAN: CAN variant with hybrid (non-doubling) dilations and residual
+context layers that start as identities, to reduce gridding on thin
+structures such as the rectal wall.
+
 Only PyTorch is used here (no NumPy), as required by the assessment spec.
 """
 
@@ -153,6 +157,61 @@ class CAN(nn.Module):
         return self.head(self.context(self.front_end(x)))
 
 
+class ResidualDilatedConv(nn.Module):
+    """
+    Dilated 3x3 conv and batch norm added back to the input, then ReLU.
+
+    The batch norm scale starts at zero (Goyal et al., 2017), so the block
+    is an exact identity at initialisation. This plays the role of the
+    identity initialisation that Yu and Koltun (2016) found necessary for
+    training the context module.
+    """
+
+    def __init__(self, channels, dilation):
+        super().__init__()
+        self.conv = nn.Conv2d(channels, channels, kernel_size=3,
+                              padding=dilation, dilation=dilation, bias=False)
+        self.norm = nn.BatchNorm2d(channels)
+        nn.init.zeros_(self.norm.weight)
+        self.act = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        return self.act(x + self.norm(self.conv(x)))
+
+
+class ResidualCAN(nn.Module):
+    """
+    CAN variant aimed at the gridding artefact of doubling dilations.
+
+    With dilations 1, 2, 4, 8, ... every layer samples the same sparse grid,
+    so thin structures such as the rectal wall can fall between the taps.
+    Following Hybrid Dilated Convolution (Wang et al., 2018), the dilations
+    (1, 2, 5, 9, 17, 33) share no common factor and the gap between sampled
+    pixels never exceeds the kernel size. The last two layers step back down
+    (2, 1) to smooth any remaining gridding, as in Dilated Residual Networks
+    (Yu et al., 2017). Receptive field is about 145 px, close to the CAN's
+    135 px, with the same number of layers and parameters.
+
+    Context layers are residual and start as identities (see
+    ResidualDilatedConv). Front-end and head match the CAN.
+    """
+
+    DILATIONS = (1, 2, 5, 9, 17, 33, 2, 1)
+
+    def __init__(self, in_channels=1, num_classes=6, base_channels=64):
+        super().__init__()
+        c = base_channels
+        self.front_end = nn.Sequential(
+            DilatedConv(in_channels, c, dilation=1),
+            DilatedConv(c, c, dilation=1),
+        )
+        self.context = nn.Sequential(*[ResidualDilatedConv(c, d) for d in self.DILATIONS])
+        self.head = nn.Conv2d(c, num_classes, kernel_size=1)
+
+    def forward(self, x):
+        return self.head(self.context(self.front_end(x)))
+
+
 def count_parameters(model):
     """Number of trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -161,7 +220,7 @@ def count_parameters(model):
 if __name__ == "__main__":
     # Shape check: one forward and backward pass on a dummy batch.
     x = torch.randn(2, 1, 256, 128)
-    for model in (UNet(), CAN()):
+    for model in (UNet(), CAN(), ResidualCAN()):
         out = model(x)
         out.mean().backward()
         print(f"{type(model).__name__} output {tuple(out.shape)}, "
