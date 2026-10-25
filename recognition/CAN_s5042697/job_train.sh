@@ -33,7 +33,7 @@ echo "Job $SLURM_JOB_ID on $(hostname), started $(date)"
 echo "run=$RUN_NAME model=$MODEL epochs=$EPOCHS seed=$SEED ${LIMIT_ARG} ${EXTRA}"
 nvidia-smi
 
-python train.py \
+python -u train.py \
     --model "$MODEL" \
     --run-name "$RUN_NAME" \
     --seed "$SEED" \
