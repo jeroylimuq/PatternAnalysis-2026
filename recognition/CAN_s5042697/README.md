@@ -227,6 +227,9 @@ MODEL=can SEED=1 RUN_NAME=can_s1 sbatch job_train.sh
 
 # Evaluate, boundary analysis and failure figures
 python predict.py --checkpoints runs/unet/best.pt runs/can/best.pt --out-dir runs/predict
+
+# Regenerate the README figures in images/ (needs all 12 runs and predict.py output in runs/predict_final)
+python plot_figures.py
 ```
 
 **Example output of `predict.py`** (U-Net, seed 42):
@@ -249,12 +252,13 @@ python predict.py --checkpoints runs/unet/best.pt runs/can/best.pt --out-dir run
 
 ## 10. Dependencies and reproducibility
 
-<!-- TODO: requirements.txt pins torch 2.14.1 / numpy 2.5.4, but the Rangpur runs used torch 2.13.0+cu130 / numpy 2.4.6. Align before submitting. -->
+Install with `pip install -r requirements.txt`. These are the exact versions used for every run in this report (Rangpur `torch` conda environment):
 
-| Package | Version (Rangpur runs) |
+| Package | Version |
 |---|---|
 | Python | 3.11.15 |
 | PyTorch | 2.13.0 (CUDA 13.0) |
+| torchvision | 0.28.0 |
 | NumPy | 2.4.6 |
 | nibabel | 5.4.2 |
 | matplotlib | 3.11.2 |
