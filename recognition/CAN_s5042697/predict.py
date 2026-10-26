@@ -5,8 +5,8 @@ Example:
     python predict.py --checkpoints runs/unet/best.pt runs/can/best.pt
 
 For each checkpoint this prints per-class Dice / IoU, prostate Dice by
-anatomical position, false-positive slices and inference latency, and saves
-to --out-dir:
+anatomical position, false-positive slices, inference latency and peak GPU
+memory, and saves to --out-dir:
     <model>_per_slice.csv   one row per test slice
     <model>_worst.png       the worst prostate slices (input, truth,
                             prediction, error overlay)
@@ -209,7 +209,11 @@ def region_summary(rows):
 
 @torch.no_grad()
 def measure_latency(model, dataset, device, n=50, warmup=5):
-    """Mean seconds per slice at batch size 1, after warm-up."""
+    """
+    Mean seconds per slice at batch size 1, after warm-up, and peak GPU
+    memory in MiB during those passes (weights plus activations; None when
+    not on CUDA).
+    """
     def sync():
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -217,6 +221,8 @@ def measure_latency(model, dataset, device, n=50, warmup=5):
             torch.mps.synchronize()
 
     x = dataset[0][0].unsqueeze(0).to(device)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     for _ in range(warmup):
         model(x)
     sync()
@@ -224,7 +230,9 @@ def measure_latency(model, dataset, device, n=50, warmup=5):
     for _ in range(n):
         model(x)
     sync()
-    return (time.perf_counter() - start) / n
+    seconds = (time.perf_counter() - start) / n
+    peak_mib = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else None
+    return seconds, peak_mib
 
 
 def error_overlay(image, truth, pred):
@@ -302,7 +310,7 @@ def main():
         rows = per_slice_rows(paths, truths, preds, regions)
         summary = region_summary(rows)
         bands, bands_per_scan = vertical_band_dice(scans, truths, preds)
-        latency = measure_latency(model, test, device)
+        latency, peak_mib = measure_latency(model, test, device)
         results[name] = {"rows": rows, "preds": preds}
 
         print(f"\n=== {name} ({ckpt_path}) on {device} ===")
@@ -318,6 +326,8 @@ def main():
         print(f"  false-positive prostate on {summary['false_positive_slices']} of "
               f"{summary['no_prostate_slices']} slices with no prostate")
         print(f"  latency {latency * 1000:.1f} ms per slice (batch 1)")
+        if peak_mib is not None:
+            print(f"  peak GPU memory {peak_mib:.0f} MiB at inference (batch 1)")
 
         write_csv(rows, os.path.join(args.out_dir, f"{name}_per_slice.csv"))
         write_csv(bands_per_scan, os.path.join(args.out_dir, f"{name}_bands_per_scan.csv"))
