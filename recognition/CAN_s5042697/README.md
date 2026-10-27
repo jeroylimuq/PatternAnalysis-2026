@@ -31,7 +31,7 @@ The model segments each 2D pelvic MRI slice from the HipMRI study into six label
 
 *Top: the U-Net halves the image size four times (box height shows resolution, labels show channels and size), then grows it back, with skip connections (grey) carrying detail across. Bottom: every CAN layer stays at 256×128. The red dilated layers widen the view instead. The small grids show which pixels a 3×3 filter samples at dilations 1, 2 and 4.*
 
-A U-Net shrinks the image to see a wide area, then grows it back, using skip connections to recover detail. The CAN (Yu and Koltun, 2016) never shrinks the image. It widens its view with **dilated convolutions**: 3×3 filters that sample pixels with gaps between them. A filter with dilation *d* still has 9 weights but covers a (2*d*+1)×(2*d*+1) area.
+A U-Net (Ronneberger et al., 2015) shrinks the image to see a wide area, then grows it back, using skip connections to recover detail. The CAN (Yu and Koltun, 2016) never shrinks the image. It widens its view with **dilated convolutions**: 3×3 filters that sample pixels with gaps between them. A filter with dilation *d* still has 9 weights but covers a (2*d*+1)×(2*d*+1) area.
 
 The network in [`modules.py`](modules.py) has three parts:
 
@@ -428,23 +428,16 @@ Install with `pip install -r requirements.txt`. These are the exact versions use
 **Reproducibility:**
 
 - `--seed` sets `torch.manual_seed`, which fixes weight initialisation, data order and augmentation. Results are reported over seeds 42, 1 and 2.
-- cuDNN is not forced into deterministic mode, so re-running the same seed can differ slightly. This is one more reason the results are given as mean ± std rather than single numbers.
+-
 - Every checkpoint stores its model name, constructor arguments, seed and epoch, so `predict.py` rebuilds the exact model.
-- Data and weights are not committed (see `.gitignore`).
+- Data and weights are not committed.
 
 ## 11. Artificial Intelligence Usage Disclosure
-
-<!-- TODO (student): write this in your own words. The spec requires:
-     - which AI tools were used
-     - what specific tasks they helped with
-     - how you audited, verified and tested the AI-suggested code -->
-
+     - Claude was used in this assignment to help with generation of code, comments and also testing and evaluation. AI-generation content was looked through manually, and results were checked to ensure its validity.
+    
 ## 12. References
 
 1. O. Ronneberger, P. Fischer and T. Brox, "U-Net: Convolutional networks for biomedical image segmentation," in *Proc. MICCAI*, 2015, pp. 234–241.
 2. F. Yu and V. Koltun, "Multi-scale context aggregation by dilated convolutions," in *Proc. ICLR*, 2016.
-3. P. Wang, P. Chen, Y. Yuan, D. Liu, Z. Huang, X. Hou and G. Cottrell, "Understanding convolution for semantic segmentation," in *Proc. WACV*, 2018. (Hybrid Dilated Convolution, used in ResidualCAN.)
-4. F. Yu, V. Koltun and T. Funkhouser, "Dilated residual networks," in *Proc. CVPR*, 2017. (Degridding layers at the end of ResidualCAN.)
-5. P. Goyal et al., "Accurate, large minibatch SGD: Training ImageNet in 1 hour," arXiv:1706.02677, 2017. (Zero-initialised batch-norm scale in residual blocks.)
-6. F. Isensee, P. Kickingereder, W. Wick, M. Bendszus and K. H. Maier-Hein, "Brain tumor segmentation and radiomics survival prediction: Contribution to the BRATS 2017 challenge," in *Brainlesion: Glioma, Multiple Sclerosis, Stroke and TBI Models*, 2018, pp. 287–297. (Learning-rate schedule.)
-7. HipMRI Study for prostate cancer radiotherapy, 2D slices (`keras_slices_data`), provided by the COMP3710 teaching team at `/home/groups/comp3710/HipMRI_Study_open` on Rangpur. 38 patients; body, bone, bladder, rectum and prostate segmented by an MR physicist with more than 10 years of experience (COMP3710 Report specification, Appendix A).
+3. P. Wang, P. Chen, Y. Yuan, D. Liu, Z. Huang, X. Hou and G. Cottrell, "Understanding convolution for semantic segmentation," in *Proc. WACV*, 2018.
+4. HipMRI Study for prostate cancer radiotherapy, 2D slices (`keras_slices_data`), provided by the COMP3710 teaching team at `/home/groups/comp3710/HipMRI_Study_open` on Rangpur. 38 patients; body, bone, bladder, rectum and prostate segmented by an MR physicist with more than 10 years of experience (COMP3710 Report specification, Appendix A).
