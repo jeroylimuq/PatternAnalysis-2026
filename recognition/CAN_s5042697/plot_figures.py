@@ -216,7 +216,6 @@ FAILURE_CASES = [
     ("case_040_week_0", 38, "posterior tip missed (65 px)"),
     ("case_040_week_3", 14, "anterior tip missed (47 px)"),
     ("case_041_week_0", 19, "3-px label at the anterior end"),
-    ("case_040_week_3", 33, "no prostate: CAN adds a false tip"),
     ("case_040_week_3", 34, "no prostate: false tip on the rectum"),
 ]
 
@@ -271,12 +270,15 @@ def _label_counts(labels):
 def failure_crops(checkpoints, data_root, out_dir, half=24):
     """
     For each case in FAILURE_CASES, show a (2*half)-pixel crop of the input,
-    the ground truth and each model's error overlay, centred on the true
-    prostate (or on any predicted prostate when there is none).
+    the ground truth and each model's predicted labels, centred on the true
+    prostate (or on any predicted prostate when there is none). A white
+    outline marks the true prostate in every label panel, so a missed
+    prostate shows what it was labelled as instead.
     """
     import torch
     from dataset import NUM_CLASSES
-    from predict import LABEL_CMAP, error_overlay
+    from dataset import CLASS_NAMES
+    from predict import LABEL_CMAP
 
     test, index, models, device = _load_for_figures(checkpoints, data_root)
 
@@ -305,19 +307,26 @@ def failure_crops(checkpoints, data_root, out_dir, half=24):
         crop = (slice(y0, y0 + 2 * half), slice(x0, x0 + 2 * half))
 
         # Arrays are (256, 128) with axis 0 left-right; transpose so superior is up.
-        def draw(ax, img, title, **kw):
+        def draw(ax, img, title, outline=False, **kw):
             ax.imshow(np.swapaxes(img[crop], 0, 1), origin="lower", **kw)
+            if outline and (truth == PROSTATE).any():
+                ax.contour(np.swapaxes((truth == PROSTATE)[crop], 0, 1).astype(float), levels=[0.5],
+                           colors="white", linewidths=1.2, origin="lower")
             ax.set_title(title, fontsize=8)
             ax.set_xticks([])
             ax.set_yticks([])
 
+        labels = dict(cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
         draw(axes[r, 0], image, f"{scan} s{sl}", cmap="gray")
         axes[r, 0].set_ylabel(desc, fontsize=8)
-        draw(axes[r, 1], truth, "ground truth", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
+        draw(axes[r, 1], truth, "ground truth", outline=True, **labels)
         for k, ((name, _), pred) in enumerate(zip(models, preds)):
-            draw(axes[r, 2 + k], error_overlay(image, truth, pred), name)
-    fig.suptitle("Prostate errors (zoomed): green correct, red false prostate, blue missed prostate", fontsize=9)
-    fig.tight_layout()
+            draw(axes[r, 2 + k], pred, f"{name} prediction", outline=True, **labels)
+    handles = [Patch(color=LABEL_CMAP(c), label=CLASS_NAMES[c]) for c in range(1, NUM_CLASSES)]
+    handles.append(Patch(facecolor="none", edgecolor="black", label="true prostate (white outline)"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=8, frameon=False)
+    fig.suptitle("Zoomed failure cases: each model's labels, with the true prostate outlined in white", fontsize=9)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(os.path.join(out_dir, "failure_crops.png"), dpi=120)
     plt.close(fig)
 

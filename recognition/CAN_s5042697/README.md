@@ -271,7 +271,6 @@ Measured on an NVIDIA A100-PCIE-40GB. Training memory and time are from the seed
 
 - **3 test patients, dominated by one.** Of the 9 test scans, 7 are repeat scans of patient 040 (weeks 0–7); patients 041 and 042 have one scan each. The results therefore mostly describe one patient. Small differences, such as the U-Net's 0.01–0.02 prostate lead, are close to the noise.
 - **2D only.** No model sees neighbouring slices, which is the likely cause of the shared edge-slice failures (Section 7).
-- **Tiny labels.** Some Dice-0 slices have only 1–9 prostate pixels, which may be labelling noise, and they pull down the edge-slice averages for every model equally.
 - **Timing** varies between Rangpur jobs (Section 6.4), so inference times are approximate.
 
 ## 7. Failure case analysis
@@ -297,14 +296,14 @@ The prostate on these slices is only a few pixels, so the cases below use zoomed
 
 ![Zoomed failure cases](images/failure_crops.png)
 
-*Rows 1–3: Cases 1–3. Rows 4–5: Case 4 (slices 33 and 34). The pixel counts quoted below (what each model called the missed prostate, and what lies under false prostate) are printed by `plot_figures.py` when it draws this figure.*
+*Each model's predicted labels, in the same colours as the ground truth. The **white outline** marks where the true prostate is, so you can see what each model called it: brown inside the outline means it was labelled rectum, grey means ordinary tissue, and pink with no outline is false prostate. Rows 1–4: Cases 1–4. The pixel counts quoted below are printed by `plot_figures.py` when it draws this figure.*
 
 ### Case 1: posterior tip lost in the rectal wall (`case_040_week_0`, slice 38)
 
 - **What the slice shows:** the last slice of the prostate at the back. The true prostate is 65 pixels in thin, broken strips lying directly on top of the rectum.
 - **What the models predict:** no prostate, in every model. The U-Net labels 47 of the 65 prostate pixels as **rectum** and the rest as body. The CAN versions split them similarly (24–38 as rectum).
 - **Why it fails:** on this slice the prostate and the rectal wall have very similar grey levels, with little visible boundary between them in the crop. The model has to rely mostly on shape and position, and a thin strip sitting on the rectum looks like part of the rectum.
-- **Clinical consequence:** under-contouring at the prostate-rectum interface, the exact location the spec warns about. The real risk is that a reviewer, seeing a clean rectum contour, does not notice the missing prostate.
+- **Clinical consequence:** under-contouring at the prostate-rectum interface. The real risk is that a reviewer, seeing a clean rectum contour, does not notice the missing prostate.
 
 ### Case 2: anterior tip missed under the bladder (`case_040_week_3`, slice 14)
 
@@ -315,14 +314,18 @@ The prostate on these slices is only a few pixels, so the cases below use zoomed
 
 ### Case 3: a 3-pixel label (`case_041_week_0`, slice 19)
 
-- **What the slice shows:** the ground truth marks only 3 pixels as prostate, a tiny line under the bladder.
-- **What the models predict:** the U-Net, CAN and CAN-128 predict nothing. ResidualCAN finds the 3 pixels but adds 15 false ones around them.
-- **Interpretation:** this is probably not a meaningful model failure. A 3-pixel structure is at the limit of manual annotation and may be partial-volume labelling noise. Several of the Dice-0 slices are like this (1–9 pixels). They still count as Dice 0 in the per-slice averages, which is one reason the edge-slice scores in Section 6.2 are so low. **When reading those scores, separate these tiny labels from real misses like Cases 1 and 2** (47–148 pixels).
+- **What the slice shows:** the ground truth marks only **3 pixels** as prostate, a tiny dot under the bladder.
+- **What the models predict:** the U-Net, CAN and CAN-128 predict nothing there. ResidualCAN finds the 3 pixels but adds 15 false ones around them.
+- **Why this is not a meaningful failure:**
+  1. **A 3-pixel dot is not a reliable label.** The prostate was outlined by hand. At the very tip of the gland, slicing that outline can leave a few stray pixels, and no one can draw accurately at this scale. We cannot be sure there is really prostate here.
+  2. **The score exaggerates the miss.** Dice only looks at the prostate pixels, so missing these 3 pixels scores **0**, the same as missing a whole 500-pixel prostate. The score says "total failure", but in reality only 3 pixels are off.
+  3. **So it says little about the models.** It is mostly a weakness of the Dice score on tiny labels.
+- **Why it is included:** several Dice-0 slices are like this, and they count fully in the edge-slice averages of Section 6.2. This case shows that not every Dice 0 is a real clinical miss. The real misses are slices like Cases 1 and 2, with 47–148 prostate pixels.
 
-### Case 4: the CAN adds a false prostate over the rectum (`case_040_week_3`, slices 33–34)
+### Case 4: the CAN adds a false prostate over the rectum (`case_040_week_3`, slice 34)
 
 - **What the slice shows:** just past the back end of the prostate, so this slice has **no true prostate**: only body tissue and rectum.
-- **What the models predict:** the U-Net correctly predicts no prostate. The CAN and CAN-128 draw about 100 pixels of prostate on each slice, and ResidualCAN about 200. On slice 34, **84 of the CAN's 100 false prostate pixels sit on true rectum** (88 of 90 for CAN-128, 140 of 185 for ResidualCAN). This slice and slice 33 are the two worst false-prostate slices found by the automatic ranking above.
+- **What the models predict:** the U-Net correctly predicts no prostate. Every CAN version draws a false prostate, and most of it sits on the rectum: **84 of the CAN's 100 false pixels**, 88 of 90 for CAN-128, and 140 of 185 for ResidualCAN. The neighbouring slice 33 has the same error, and these two are the worst false-prostate slices found by the automatic ranking above.
 - **Why it fails:** this matches finding 3 in Section 6.2. The CAN extends the prostate a slice or two past its real end, and here the extension lands on the rectum. A possible reason, not tested here, is that its wide view sees the anatomy that usually surrounds a prostate and fills one in.
 - **Clinical consequence:** this is the most dangerous failure in the study. A prostate contour that leaks into the rectum means the rectal wall would be planned to receive the full prostate dose, which is the cause of **radiation proctitis** named in the spec. Notably, it is made only by the CAN versions.
 
@@ -352,7 +355,7 @@ All four are met. The CAN passes the accuracy target, but it does not beat the b
 
 **To the project manager:**
 
-1. **Use the 2D U-Net, not the CAN.** Across three CAN versions (standard, 4× wider, and with hybrid dilations), multi-scale context gave no measurable clinical gain at the prostate boundaries. Every version is less accurate at the rectum, the critical organ at risk, and draws false prostate past the real ends of the prostate 6–12× as often. In the worst case found (Section 7, Case 4), that false prostate lies on the rectal wall, which in treatment would mean a rectal overdose. The CAN's advantages are its 23× smaller size, about half the inference memory, and faster inference. These do not matter for an offline contouring tool, and it needs 1.8× the GPU memory to train.
+1. **Use the 2D U-Net, not the CAN.** Across the three CAN versions, multi-scale context gave no measurable clinical gain at the prostate boundaries. Every version is less accurate at the rectum, the critical organ at risk, and draws false prostate past the real ends of the prostate. In the worst case found (Section 7, Case 4), that false prostate lies on the rectal wall, which in treatment would mean a rectal overdose. The CAN's advantages are its 23× smaller size, about half the inference memory, and faster inference. These do not matter for an offline contouring tool, and it needs 1.8× the GPU memory to train.
 2. **Do not automate the edge slices.** With every model, the first and last few prostate-bearing slices of each scan, plus the base and apex regions, need mandatory review by a specialist. The tool is suitable as a draft on central slices (Dice ≈ 0.91–0.92).
 3. **Next investment: inter-slice context, not more in-plane context.** The shared failures point to a 2.5D input (neighbouring slices as extra channels) or a 3D model as the next step, not a wider 2D context.
 4. **Caveat:** 3 test patients is a small sample. Validate on more patients before any clinical use.
