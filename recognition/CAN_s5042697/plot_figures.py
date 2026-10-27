@@ -1,14 +1,21 @@
 """
 Make the README figures from finished training runs and predict.py output.
 
-Example (after training all runs and running predict.py into runs/predict_final):
-    python plot_figures.py --runs-dir runs --predict-dir runs/predict_final
+Example (after training all runs and running predict.py on all 12 into runs/predict_all12):
+    python plot_figures.py --runs-dir runs --predict-dir runs/predict_all12
 
 Saves to --out-dir (default images/):
     architecture.png   U-Net vs CAN layout and what dilation samples
     curves.png         validation loss and prostate Dice, mean +/- std over seeds
     slice_thirds.png   one test scan's prostate slices grouped into thirds,
                        with the U-Net and CAN predictions
+    fp_distance.png    false-positive prostate slices by how far they lie
+                       beyond the true end of the gland
+    example.png        input, ground truth and full predictions on one central
+                       slice (only with --checkpoints)
+    failure_crops.png  zoomed failure cases (only with --checkpoints; needs the
+                       data and trained weights), e.g.
+                       python plot_figures.py --checkpoints runs/unet/best.pt runs/can/best.pt
 """
 
 import argparse
@@ -160,19 +167,179 @@ def slice_thirds(predict_dir, scan, out_dir):
     plt.close(fig)
 
 
+# ---------- False positives beyond the gland ----------
+def fp_distances(predict_dir, model):
+    """
+    For each slice with no true prostate but some predicted prostate, the
+    number of slices between it and the nearest end of that scan's gland
+    (0 would mean a gap inside the gland).
+    """
+    rows = list(csv.DictReader(open(os.path.join(predict_dir, f"{model}_per_slice.csv"))))
+    gland = {}
+    for r in rows:
+        if int(r["gt_pixels"]) > 0:
+            lo, hi = gland.get(r["scan"], (10**9, -1))
+            gland[r["scan"]] = (min(lo, int(r["slice"])), max(hi, int(r["slice"])))
+    out = []
+    for r in rows:
+        if int(r["gt_pixels"]) == 0 and int(r["pred_pixels"]) > 0:
+            k = int(r["slice"])
+            lo, hi = gland[r["scan"]]
+            out.append(lo - k if k < lo else k - hi if k > hi else 0)
+    return out
+
+
+def fp_distance(predict_dir, out_dir, max_bin=7):
+    """Bar chart of false-positive slices by distance, summed over seeds."""
+    bins = np.arange(0, max_bin + 1)
+    fig, ax = plt.subplots(figsize=(9, 3.6))
+    width = 0.2
+    for k, (name, runs) in enumerate(GROUPS.items()):
+        d = np.concatenate([fp_distances(predict_dir, r) for r in runs])
+        counts = [(np.minimum(d, max_bin) == b).sum() for b in bins]
+        ax.bar(bins + (k - 1.5) * width, counts, width, color=COL[name], label=f"{name} ({len(d)} slices)")
+    ax.set_xticks(bins, [str(b) for b in bins[:-1]] + [f"{max_bin}+"])
+    ax.set_xlabel("slices beyond the true end of the prostate (0 = gap inside the prostate)")
+    ax.set_ylabel("false-positive slices\n(total over 3 seeds)")
+    ax.set_title("Where false prostate appears: slices with no true prostate but some predicted")
+    ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3, axis="y")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "fp_distance.png"), dpi=110)
+    plt.close(fig)
+
+
+# ---------- Zoomed failure cases ----------
+# (scan, slice, short description) for each row of failure_crops.png
+FAILURE_CASES = [
+    ("case_040_week_0", 38, "posterior tip missed (65 px)"),
+    ("case_040_week_3", 14, "anterior tip missed (47 px)"),
+    ("case_041_week_0", 19, "3-px label at the anterior end"),
+    ("case_040_week_3", 33, "no prostate: CAN adds a false tip"),
+    ("case_040_week_3", 34, "no prostate: false tip on the rectum"),
+]
+
+
+def _load_for_figures(checkpoints, data_root):
+    """Test dataset, (scan, slice) -> index map, loaded models and device."""
+    from dataset import get_datasets
+    from predict import load_model, slice_info
+    from utils import get_device
+
+    device = get_device(None)
+    test = get_datasets(data_root, augment=False)["test"]
+    index = {slice_info(path): i for i, (path, _) in enumerate(test.pairs)}
+    return test, index, [load_model(c, device) for c in checkpoints], device
+
+
+def example_output(checkpoints, data_root, out_dir, scan="case_040_week_0", sl=27):
+    """Input, ground truth and each model's predicted labels on one slice."""
+    import torch
+    from dataset import CLASS_NAMES, NUM_CLASSES
+    from predict import LABEL_CMAP
+
+    test, index, models, device = _load_for_figures(checkpoints, data_root)
+    image, truth = test[index[(scan, sl)]]
+    with torch.no_grad():
+        preds = [m(image.unsqueeze(0).to(device)).argmax(1)[0].cpu().numpy() for _, m in models]
+
+    panels = [(image[0].numpy(), f"input ({scan} s{sl})", dict(cmap="gray")),
+              (truth.numpy(), "ground truth", dict(cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1))]
+    panels += [(pred, f"{name} prediction", dict(cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1))
+               for (name, _), pred in zip(models, preds)]
+    fig, axes = plt.subplots(1, len(panels), figsize=(3 * len(panels), 2.4))
+    for ax, (img, title, kw) in zip(axes, panels):
+        # Arrays are (256, 128) with axis 0 left-right; transpose so superior is up.
+        ax.imshow(np.swapaxes(img, 0, 1), origin="lower", **kw)
+        ax.set_title(title, fontsize=9)
+        ax.axis("off")
+    handles = [Patch(color=LABEL_CMAP(c), label=CLASS_NAMES[c]) for c in range(1, NUM_CLASSES)]
+    fig.legend(handles=handles, loc="lower center", ncol=NUM_CLASSES - 1, fontsize=8, frameon=False)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.savefig(os.path.join(out_dir, "example.png"), dpi=120)
+    plt.close(fig)
+
+
+def _label_counts(labels):
+    """{'rectum': 47, ...} for an array of class indices."""
+    from dataset import CLASS_NAMES
+    values, counts = np.unique(labels, return_counts=True)
+    return {CLASS_NAMES[v]: int(c) for v, c in zip(values, counts)}
+
+
+def failure_crops(checkpoints, data_root, out_dir, half=24):
+    """
+    For each case in FAILURE_CASES, show a (2*half)-pixel crop of the input,
+    the ground truth and each model's error overlay, centred on the true
+    prostate (or on any predicted prostate when there is none).
+    """
+    import torch
+    from dataset import NUM_CLASSES
+    from predict import LABEL_CMAP, error_overlay
+
+    test, index, models, device = _load_for_figures(checkpoints, data_root)
+
+    cols = 2 + len(models)
+    fig, axes = plt.subplots(len(FAILURE_CASES), cols, figsize=(2.1 * cols, 2.3 * len(FAILURE_CASES)), squeeze=False)
+    for r, (scan, sl, desc) in enumerate(FAILURE_CASES):
+        image, truth = test[index[(scan, sl)]]
+        with torch.no_grad():
+            preds = [m(image.unsqueeze(0).to(device)).argmax(1)[0].cpu().numpy() for _, m in models]
+        image, truth = image[0].numpy(), truth.numpy()
+
+        # Printed breakdown backing the README case write-ups: what the
+        # models called the true prostate, and what lies under false prostate.
+        for (name, _), pred in zip(models, preds):
+            missed = (truth == PROSTATE) & (pred != PROSTATE)
+            false = (truth != PROSTATE) & (pred == PROSTATE)
+            print(f"{scan} s{sl} {name}: missed {missed.sum()} px predicted as "
+                  f"{_label_counts(pred[missed])}; false {false.sum()} px over truth {_label_counts(truth[false])}")
+
+        target = truth == PROSTATE
+        if not target.any():
+            target = np.any([p == PROSTATE for p in preds], axis=0)
+        cy, cx = np.argwhere(target).mean(0).round().astype(int) if target.any() else np.array(image.shape) // 2
+        y0 = int(np.clip(cy - half, 0, image.shape[0] - 2 * half))
+        x0 = int(np.clip(cx - half, 0, image.shape[1] - 2 * half))
+        crop = (slice(y0, y0 + 2 * half), slice(x0, x0 + 2 * half))
+
+        # Arrays are (256, 128) with axis 0 left-right; transpose so superior is up.
+        def draw(ax, img, title, **kw):
+            ax.imshow(np.swapaxes(img[crop], 0, 1), origin="lower", **kw)
+            ax.set_title(title, fontsize=8)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        draw(axes[r, 0], image, f"{scan} s{sl}", cmap="gray")
+        axes[r, 0].set_ylabel(desc, fontsize=8)
+        draw(axes[r, 1], truth, "ground truth", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
+        for k, ((name, _), pred) in enumerate(zip(models, preds)):
+            draw(axes[r, 2 + k], error_overlay(image, truth, pred), name)
+    fig.suptitle("Prostate errors (zoomed): green correct, red false prostate, blue missed prostate", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "failure_crops.png"), dpi=120)
+    plt.close(fig)
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--runs-dir", default=os.path.join(HERE, "runs"))
-    p.add_argument("--predict-dir", default=os.path.join(HERE, "runs", "predict_final"))
+    p.add_argument("--predict-dir", default=os.path.join(HERE, "runs", "predict_all12"))
     p.add_argument("--out-dir", default=os.path.join(HERE, "images"))
     p.add_argument("--scan", default="case_040_week_0", help="test scan for slice_thirds.png")
+    p.add_argument("--checkpoints", nargs="+", default=None, help="models to show in failure_crops.png")
+    p.add_argument("--data-root", default=os.path.join(HERE, "data", "keras_slices_data"))
     args = p.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
     architecture(args.out_dir)
     curves(args.runs_dir, args.out_dir)
     slice_thirds(args.predict_dir, args.scan, args.out_dir)
+    fp_distance(args.predict_dir, args.out_dir)
+    if args.checkpoints:
+        example_output(args.checkpoints, args.data_root, args.out_dir)
+        failure_crops(args.checkpoints, args.data_root, args.out_dir)
     print(f"Saved figures to {args.out_dir}")
 
 
