@@ -11,8 +11,8 @@ re-growing the image like a U-Net, it stays at full resolution and widens
 its view with dilated 3x3 convolutions whose dilation doubles each layer.
 
 ResidualCAN: CAN variant with hybrid (non-doubling) dilations and residual
-context layers that start as identities, to reduce gridding on thin
-structures such as the rectal wall.
+context layers that start as identities, to make the dilated context more
+even (less gridding) and easier to train.
 
 Only PyTorch is used here (no NumPy), as required by the assessment spec.
 """
@@ -183,13 +183,14 @@ class ResidualCAN(nn.Module):
     """
     CAN variant aimed at the gridding artefact of doubling dilations.
 
-    With dilations 1, 2, 4, 8, ... every layer samples the same sparse grid,
-    so thin structures such as the rectal wall can fall between the taps.
-    Following Hybrid Dilated Convolution (Wang et al., 2018), the dilations
-    (1, 2, 5, 9, 17, 33) share no common factor and the gap between sampled
-    pixels never exceeds the kernel size. The last two layers step back down
-    (2, 1) to smooth any remaining gridding, as in Dilated Residual Networks
-    (Yu et al., 2017). Receptive field is about 145 px, close to the CAN's
+    With dilations 1, 2, 4, 8, ... every pixel in the receptive field is
+    reached, but very unevenly: some pixels are reached through far more
+    paths than their neighbours (34 to 88 near the centre for the CAN), so
+    the effective weighting is chequered. Following Hybrid Dilated
+    Convolution (Wang et al., 2018), the dilations (1, 2, 5, 9, 17, 33) do
+    not share a common spacing, which evens this out (44 to 76 paths). The
+    last two layers step back down (2, 1) to smooth any remaining gridding,
+    as in Dilated Residual Networks (Yu et al., 2017). Receptive field is about 145 px, close to the CAN's
     135 px, with the same number of layers and parameters.
 
     Context layers are residual and start as identities (see

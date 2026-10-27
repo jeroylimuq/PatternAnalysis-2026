@@ -130,8 +130,8 @@ def train_transform():
 
     Arrays are (256, 128) with the 256 axis running left-right across the
     pelvis, so RandomVerticalFlip (which flips dim -2) is a left-right mirror.
-    A flip along the other axis would swap anterior and posterior, which is
-    not anatomically plausible. Masks are resampled with nearest neighbour
+    A flip along the other axis would turn the coronal slice upside down
+    (bladder below the prostate), which is not anatomically plausible. Masks are resampled with nearest neighbour
     automatically because they are wrapped as tv_tensors.Mask.
     """
     return v2.Compose([
