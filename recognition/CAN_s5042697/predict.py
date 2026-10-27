@@ -10,7 +10,10 @@ memory, and saves to --out-dir:
     <model>_per_slice.csv   one row per test slice
     <model>_worst.png       the worst prostate slices (input, truth,
                             prediction, error overlay)
-    compare_worst.png       the same slices for every model side by side
+    <model>_worst_fp.png    the worst over-predictions: slices with no true
+                            prostate, ranked by false prostate pixels
+    compare_worst.png       the worst slices for every model side by side
+    compare_worst_fp.png    the same for over-predictions
 
 The slices are coronal (iliac wings, femoral heads and shafts are visible,
 with the bladder directly above the prostate), so position is analysed on
@@ -253,6 +256,13 @@ def show(ax, img, title, **kwargs):
     ax.axis("off")
 
 
+def error_title(row):
+    """Dice where the slice has prostate; otherwise the false pixel count."""
+    if row["gt_pixels"] > 0:
+        return f"prostate Dice {row['prostate_dice']:.2f}"
+    return f"no prostate, {row['pred_pixels']} px false"
+
+
 def plot_worst(name, idx, rows, images, truths, preds, path):
     fig, axes = plt.subplots(len(idx), 4, figsize=(10, 1.9 * len(idx)), squeeze=False)
     for r, i in enumerate(idx):
@@ -262,7 +272,7 @@ def plot_worst(name, idx, rows, images, truths, preds, path):
         show(axes[r, 1], truths[i], "ground truth", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
         show(axes[r, 2], preds[i], f"{name} prediction", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
         show(axes[r, 3], error_overlay(images[i], truths[i], preds[i]),
-             f"prostate Dice {row['prostate_dice']:.2f}\nTP green, FP red, FN blue")
+             f"{error_title(row)}\nTP green, FP red, FN blue")
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -279,7 +289,7 @@ def plot_compare(idx, results, images, truths, path):
         for c, name in enumerate(names):
             res = results[name]
             show(axes[r, 2 + c], error_overlay(images[i], truths[i], res["preds"][i]),
-                 f"{name}: Dice {res['rows'][i]['prostate_dice']:.2f}")
+                 f"{name}: {error_title(res['rows'][i])}")
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -335,6 +345,14 @@ def main():
         worst = sorted(scored, key=lambda i: rows[i]["prostate_dice"])[:args.n_worst]
         plot_worst(name, worst, rows, images, truths, preds, os.path.join(args.out_dir, f"{name}_worst.png"))
 
+        # Dice cannot rank slices with no true prostate (it is 0 for any false
+        # prostate), so rank over-predictions by the number of false pixels.
+        false_slices = [i for i, r in enumerate(rows) if r["gt_pixels"] == 0 and r["pred_pixels"] > 0]
+        worst_fp = sorted(false_slices, key=lambda i: -rows[i]["pred_pixels"])[:args.n_worst]
+        if worst_fp:
+            plot_worst(name, worst_fp, rows, images, truths, preds,
+                       os.path.join(args.out_dir, f"{name}_worst_fp.png"))
+
     if len(results) > 1:
         # Slices that are worst on average across models, shown for every model.
         rows0 = next(iter(results.values()))["rows"]
@@ -342,6 +360,13 @@ def main():
         mean_dice = {i: np.mean([res["rows"][i]["prostate_dice"] for res in results.values()]) for i in scored}
         worst = sorted(scored, key=mean_dice.get)[:args.n_worst]
         plot_compare(worst, results, images, truths, os.path.join(args.out_dir, "compare_worst.png"))
+
+        # Over-predictions: empty slices with the most false prostate on average.
+        empty = [i for i, r in enumerate(rows0) if r["gt_pixels"] == 0]
+        mean_fp = {i: np.mean([res["rows"][i]["pred_pixels"] for res in results.values()]) for i in empty}
+        worst_fp = [i for i in sorted(empty, key=lambda i: -mean_fp[i]) if mean_fp[i] > 0][:args.n_worst]
+        if worst_fp:
+            plot_compare(worst_fp, results, images, truths, os.path.join(args.out_dir, "compare_worst_fp.png"))
 
     print(f"\nSaved CSVs and figures to {args.out_dir}")
 
