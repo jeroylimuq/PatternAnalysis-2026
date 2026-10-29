@@ -14,7 +14,7 @@ ResidualCAN: CAN variant with hybrid (non-doubling) dilations and residual
 context layers that start as identities, to make the dilated context more
 even (less gridding) and easier to train.
 
-Only PyTorch is used here (no NumPy), as required by the assessment spec.
+Only PyTorch is used here (no NumPy).
 """
 
 import torch
@@ -78,7 +78,6 @@ class UNet(nn.Module):
     softmax is applied in the loss and at inference.
 
     `base_channels` sets the width of the first level and doubles each level.
-    The original paper uses 64; 32 keeps the model light enough for a laptop.
     """
 
     def __init__(self, in_channels=1, num_classes=6, base_channels=32):

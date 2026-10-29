@@ -21,7 +21,7 @@
 
 External-beam radiotherapy for prostate cancer needs the prostate and nearby organs at risk (bladder, rectum, bones) contoured on every MRI slice. Doing this by hand is slow. This project builds a prototype that proposes a draft contour for a specialist to review and correct.
 
-The model segments each 2D pelvic MRI slice from the HipMRI study into six labels: background, body, bone, bladder, rectum and prostate. The prostate covers under 0.5% of the pixels.
+The model segments each 2D pelvic MRI slice from the HipMRI study into six labels: background, body, bone, bladder, rectum and prostate, with the prostate covering under 0.5% of the pixels.
 
 **The engineering dilemma.** A high overall Dice score can hide the failures that matter clinically such as a missed prostate label at the base and apex, or contours that leak into the rectum or bladder. This project asks whether the multi-scale context of a Context Aggregation Network (CAN) fixes these boundary failures compared with a plain 2D U-Net, or whether it only does as well on the easy central slices while costing more compute.
 
@@ -39,7 +39,7 @@ The network in [`modules.py`](modules.py) has three parts:
 2. **Context module:** eight 3×3 convolutions with dilations 1, 1, 2, 4, 8, 16, 32, 1. Doubling the dilation grows the receptive field exponentially, so each output pixel draws on about 135 px of surroundings: the prostate plus the bladder, rectum and pelvic bones around it.
 3. **Head:** a 1×1 convolution that turns each pixel's 64 features into scores for the six labels.
 
-Every layer runs at the full 256×128 resolution, so small structures are never shrunk away. Both models use batch norm and ReLU, so the comparison isolates "dilated full-resolution context" against "encoder-decoder downsampling".
+Every layer runs at the full 256×128 resolution, so small structures are never shrunk away. Both models use batch norm and ReLU, so the comparison mainly compares between "dilated full-resolution context" against "encoder-decoder downsampling".
 
 | Model | Parameters | Receptive field | Resolution inside the network |
 |---|---|---|---|
@@ -48,10 +48,12 @@ Every layer runs at the full 256×128 resolution, so small structures are never 
 | CAN-128 (wider) | 1.33M | ~135 px | 256×128 throughout |
 | ResidualCAN | 0.33M | ~145 px | 256×128 throughout |
 
+The CAN has far fewer parameters than the U-Net (0.33M vs 7.76M). To check that this did not decide the comparison, a 4× larger version, **CAN-128** (128 channels, 1.33M parameters), was trained with the same settings and 3 seeds. It was no more accurate than the 64-channel CAN (Section 6.3), so adding parameters did not help, although CAN-128 is still smaller than the U-Net.
+
 **ResidualCAN** is a variant tried after the first results ([Section 6.3](#63-can-variants)). It has the same size as the CAN but changes the context module in two ways:
 
-1. **More even dilations** (1, 2, 5, 9, 17, 33, 2, 1 instead of doubling), so all nearby pixels are weighted more evenly. This reduces "gridding" (Wang et al., 2018).
-2. **Each layer starts by passing its input through unchanged** and learns a correction on top. This follows the identity initialisation Yu and Koltun recommend for the context module.
+1. **Gridding** (1, 2, 5, 9, 17, 33, 2, 1 instead of doubling). When the dilation doubles every layer, the gaps line up, so the network pays much more attention to some pixels than to their neighbours, in a chequerboard-like pattern. This could blur thin structures such as the rectal wall. Dilations that do not share a common spacing spread the attention more evenly (Wang et al., 2018).
+2. **Each layer starts by passing its input through unchanged** and learns a correction on top. In the plain CAN, each layer starts with random weights, so at the beginning of training the features from the front-end are scrambled by eight random layers before reaching the output, which can make training harder. Starting each layer as "change nothing" means the network begins from the front-end's features and only has to learn what to add. Yu and Koltun found this kind of start worked much better than random weights for the context module.
 
 ## 3. Feasibility review
 
@@ -65,9 +67,9 @@ Every layer runs at the full 256×128 resolution, so small structures are never 
 **Acceptance criteria (all on the held-out test patients):**
 
 1. **Accuracy:** prostate Dice ≥ 0.75 for the CAN.
-2. **Baseline comparison:** per-class Dice and IoU reported for both models on identical patient-level splits; no patient appears in more than one split.
+2. **Baseline comparison:** per-class Dice and IoU reported for both models on identical patient-level splits,  no patient appears in more than one split.
 3. **Boundary failure analysis:** prostate Dice reported separately for the base, apex and edge slices versus central slices, with 3–5 failure cases visualised (input, ground truth, prediction, error overlay).
-4. **Resources:** training completes within one 8-hour Rangpur GPU job per model; peak GPU memory and per-case inference time reported.
+4. **Resources:** training completes within one 8-hour Rangpur GPU job per model, peak GPU memory and per-case inference time reported.
 
 ### 3.2 Model Choice and Course Concepts
 
@@ -79,7 +81,7 @@ Every layer runs at the full 256×128 resolution, so small structures are never 
   3. **Doubling dilation:** the gaps grow 1, 1, 2, 4, 8, 16, 32, 1 across the context module, so each pixel's prediction draws on about 135 pixels of surroundings (prostate plus bladder, rectum and bones).
   4. **Full resolution throughout:** no pooling or upsampling, so small structures are never shrunk away.
   5. **1×1 classifier:** turns each pixel's features into scores for the six labels.
-- **Comparison set-up:** both models use batch norm with ReLU and identical training settings. The CAN uses 64 channels, as in a standard context module, giving 0.33M parameters against 7.76M for the baseline.
+- **Comparison set-up:** both models use batch norm with ReLU and identical training settings. The CAN uses 64 channels, as in a standard context module, giving 0.33M parameters against 7.76M for the baseline. A 4× larger CAN (CAN-128, 1.33M parameters) was also trained to check the effect of the parameter gap, however it did not improve accuracy (Section 6.3).*
 - **Course concepts:** convolutional encoder-decoders, dilated convolutions and receptive fields, skip connections, normalisation layers, augmentation, and Dice + cross-entropy loss to handle class imbalance.
 
 ### 3.3 Preliminary Feasibility Evidence
@@ -99,8 +101,8 @@ Both models pass the 0.75 prostate target after a short run, so the target seems
 
 | Risk | Mitigation |
 |---|---|
-| Only 3 test patients and 4 validation patients make scores noisy | Report per-patient results and avoid over-claiming; select checkpoints on validation prostate Dice only |
-| Global Dice hides base/apex failures | Analyse prostate Dice by position (base, apex, edge slices), as in criterion 3 |
+| Only 3 test patients and 4 validation patients make scores noisy | Report per-patient results and avoid over-claiming, select checkpoints on validation prostate Dice only |
+| Global Dice hides base/apex failures | Analyse prostate Dice by position (base, apex, edge slices), |
 | Full-resolution layers make the CAN slow and memory-hungry | Measure peak GPU memory and per-case inference time; reduce batch size if needed |
 | CAN does not beat the baseline | A valid finding for the dilemma, report it with evidence |
 
@@ -138,11 +140,6 @@ Both models pass the 0.75 prostate target after a short run, so the target seems
 | Shift up to ±5% | the body is not always centred |
 | Zoom 0.9–1.1× | body sizes differ |
 
-Three details:
-
-- **The mask gets the same change as the image**, so the labels stay lined up with the anatomy. When the mask is rotated, each pixel copies its nearest label rather than averaging two labels, which could create a label that was never there.
-- **No upside-down flip**, because a pelvis with the bladder below the prostate never occurs in a real scan.
-- **Augmentation happens before normalisation.** Rotating and shifting leave empty corners that are filled with 0. Before normalisation 0 is black, matching the background around the body. After normalisation 0 would be average grey, which would look like tissue.
 
 **Class imbalance:** prostate 0.43% and rectum 0.36% of training pixels. This is handled in the loss (Section 5).
 
@@ -191,7 +188,7 @@ All numbers are on the 3 held-out test patients. Each is the mean ± standard de
 | Rectum | **0.779 ± 0.011** | 0.732 ± 0.039 | 0.730 ± 0.022 | 0.729 ± 0.022 |
 | **Prostate** | **0.784 ± 0.007** | 0.759 ± 0.023 | 0.771 ± 0.003 | 0.747 ± 0.016 |
 
-Every model clears the 0.75 prostate Dice target. The large structures (body, bone, bladder) are segmented almost equally well by all four. The differences are in the two small organs. The U-Net leads on rectum by about 0.03 Dice, a gap larger than the seed-to-seed spread. Its prostate lead (0.01–0.02) is smaller and close to the noise of a 3-patient test set.
+Every model clears the 0.75 prostate Dice target. The large structures (body, bone, bladder) are segmented almost equally well by all four. The differences are in the two small organs. The U-Net leads on rectum by about 0.03 Dice, a gap larger than the seed-to-seed spread. Its prostate lead (0.01–0.02) is slightly smaller and closer to the noise of a 3-patient test set.
 
 ### 6.2 Boundary analysis: where the errors are
 
@@ -255,10 +252,11 @@ Neither variant closes the gap, and the test results (Sections 6.1 and 6.2) agre
 | Peak GPU memory, training (batch 16) | **1.56 GB** | 2.85 GB | 5.68 GB | 2.96 GB |
 | Peak GPU memory, inference (batch 1) | 60 MiB | **34 MiB** | 70 MiB | **34 MiB** |
 | Inference time per slice (batch 1) | 2.7 ms | **1.2 ms** | 1.8 ms | 1.3 ms |
+| Inference time per case (one 60-slice scan) | 0.16 s | **0.07 s** | 0.11 s | 0.08 s |
 | Training time per epoch (11,460 slices) | **99 s** | 105 s | 127 s | 114 s |
 | Training time, 30 epochs | **~50 min** | ~53 min | ~64 min | ~57 min |
 
-Measured on an NVIDIA A100-PCIE-40GB. Training memory and time are from the seed-42 run. Inference memory and time are the mean over 3 seeds, all measured in one job so the conditions match. Inference time varies between jobs: an earlier job on the same GPU type measured 1.6 ms (CAN) and 3.0 ms (CAN-128), while the U-Net stayed at 2.7 ms. 
+Measured on an NVIDIA A100-PCIE-40GB. Training memory and time are from the seed-42 run. Inference memory and time are the mean over 3 seeds, all measured in one job so the conditions match. Inference time varies between jobs, with an earlier job on the same GPU type measured 1.6 ms (CAN) and 3.0 ms (CAN-128), while the U-Net stayed at 2.7 ms. 
 
 **Memory depends on whether you train or predict:**
 
@@ -275,28 +273,58 @@ Measured on an NVIDIA A100-PCIE-40GB. Training memory and time are from the seed
 
 ## 7. Failure case analysis
 
-**How the cases were chosen.** [`predict.py`](predict.py) ranks the test slices in two ways, so that both kinds of error are found:
+There are two ways to get the prostate wrong, and this section looks at the worst examples of each:
 
-- **Missed prostate:** slices that contain prostate, ranked by prostate Dice (lowest first).
-- **False prostate:** slices with **no** true prostate, ranked by how many pixels the model wrongly labels as prostate. Dice cannot rank these, because it is 0 for any false prostate, whether 1 pixel or 200.
+- **Missed prostate** (under-contouring): the prostate is there, but the model does not label it. Found by ranking slices that contain prostate by prostate Dice, lowest first.
+- **False prostate** (over-contouring): there is no prostate, but the model labels some anyway. Found by ranking slices with no true prostate by the number of falsely labelled pixels. Dice cannot rank these, because it is 0 for any false prostate, whether 1 pixel or 200.
 
-The figures below use the seed-42 run of each of the four models.
+All figures use the seed-42 run of each of the four models. Each row is one slice, read from left to right: the MRI input, the ground truth, then one column per model. A zoom-in is also provided in figure 7.3.
+### How to read the colours
 
-**Worst missed prostate.** The five slices with the lowest prostate Dice are the same for every model, and every model scores Dice 0 on all five. All are edge slices: the prostate is small and every model misses all of it (blue).
+The figures use two colour schemes.
+
+
+**Labels** (ground truth in every figure, and the model columns of Figure 7.3):
+
+| Colour | Structure |
+|---|---|
+| Pink | prostate |
+| Brown | rectum |
+| Blue | bladder |
+| Yellow | bone |
+| Grey | other body tissue |
+
+**Prostate errors** (model columns of Figures 7.1 and 7.2), drawn on top of the greyscale MRI:
+
+| Colour | Meaning |
+|---|---|
+| Green | prostate, correctly labelled |
+| Red | **false prostate**: labelled prostate, but there is none |
+| Orange | **missed prostate**: real prostate, not labelled |
+
+### Figure 7.1: worst missed prostate
+
+**What to look for:** orange in every model column. On these five slices every model misses the whole prostate (Dice 0). All five are edge slices, where the prostate is small.
 
 ![Five worst missed-prostate slices](images/compare_worst.png)
 
-**Worst false prostate.** On the five slices with the most false prostate, the U-Net draws **none**, while every CAN version draws a false prostate (red) where the rectum is. ResidualCAN draws the most, up to 208 pixels.
+### Figure 7.2: worst false prostate
+
+**What to look for:** the U-Net column has no red, while every CAN column does. The CAN versions label prostate where the rectum is. ResidualCAN draws the most, up to 208 pixels.
 
 ![Five worst false-prostate slices](images/compare_worst_fp.png)
 
-*Columns: input, ground truth (blue bladder, pink prostate, brown rectum, yellow bone), then each model's error overlay (green correct prostate, red false prostate, blue missed prostate).*
+### Figure 7.3: the four cases, zoomed in
 
-The prostate on these slices is only a few pixels, so the cases below use zoomed 48×48 crops. Cases 1–3 are missed prostate (under-contouring). Case 4 is false prostate (over-contouring), made by every CAN version but not the U-Net.
+The prostate on these slices is only a few pixels, so this figure zooms in to 48×48 pixels and shows each model's full labels. A **white outline** marks where the true prostate is, so you can see what each model called it:
+
+- brown inside the outline: the model labelled the prostate as **rectum**
+- grey inside the outline: labelled as **ordinary tissue**
+- pink with no outline: **false prostate**
+
+Rows 1–4 are Cases 1–4 below. The pixel counts quoted in the cases are printed by `plot_figures.py` when it draws this figure.
 
 ![Zoomed failure cases](images/failure_crops.png)
-
-*Each model's predicted labels, in the same colours as the ground truth. The **white outline** marks where the true prostate is, so you can see what each model called it: brown inside the outline means it was labelled rectum, grey means ordinary tissue, and pink with no outline is false prostate. Rows 1–4: Cases 1–4. The pixel counts quoted below are printed by `plot_figures.py` when it draws this figure.*
 
 ### Case 1: posterior tip lost in the rectal wall (`case_040_week_0`, slice 38)
 
@@ -316,8 +344,8 @@ The prostate on these slices is only a few pixels, so the cases below use zoomed
 
 - **What the slice shows:** the ground truth marks only **3 pixels** as prostate, a tiny dot under the bladder.
 - **What the models predict:** the U-Net, CAN and CAN-128 predict nothing there. ResidualCAN finds the 3 pixels but adds 15 false ones around them.
-- **Why this is not a meaningful failure:**
-  1. **A 3-pixel dot is not a reliable label.** The prostate was outlined by hand. At the very tip of the gland, slicing that outline can leave a few stray pixels, and no one can draw accurately at this scale. We cannot be sure there is really prostate here.
+- **Why this may not be a meaningful failure:**
+  1. **A 3-pixel dot may not be a reliable label.** The prostate was outlined by hand. At the very tip of the gland, slicing that outline can leave a few stray pixels, and it is hard to draw accurately at this scale. We cannot be sure there is really prostate here.
   2. **The score exaggerates the miss.** Dice only looks at the prostate pixels, so missing these 3 pixels scores **0**, the same as missing a whole 500-pixel prostate. The score says "total failure", but in reality only 3 pixels are off.
   3. **So it says little about the models.** It is mostly a weakness of the Dice score on tiny labels.
 - **Why it is included:** several Dice-0 slices are like this, and they count fully in the edge-slice averages of Section 6.2. This case shows that not every Dice 0 is a real clinical miss. The real misses are slices like Cases 1 and 2, with 47–148 prostate pixels.
@@ -327,7 +355,7 @@ The prostate on these slices is only a few pixels, so the cases below use zoomed
 - **What the slice shows:** just past the back end of the prostate, so this slice has **no true prostate**: only body tissue and rectum.
 - **What the models predict:** the U-Net correctly predicts no prostate. Every CAN version draws a false prostate, and most of it sits on the rectum: **84 of the CAN's 100 false pixels**, 88 of 90 for CAN-128, and 140 of 185 for ResidualCAN. The neighbouring slice 33 has the same error, and these two are the worst false-prostate slices found by the automatic ranking above.
 - **Why it fails:** this matches finding 3 in Section 6.2. The CAN extends the prostate a slice or two past its real end, and here the extension lands on the rectum. A possible reason, not tested here, is that its wide view sees the anatomy that usually surrounds a prostate and fills one in.
-- **Clinical consequence:** this is the most dangerous failure in the study. A prostate contour that leaks into the rectum means the rectal wall would be planned to receive the full prostate dose, which is the cause of **radiation proctitis** named in the spec. Notably, it is made only by the CAN versions.
+- **Clinical consequence:** this is the most dangerous failure in the study. A prostate contour that leaks into the rectum means the rectal wall would be planned to receive the full prostate dose, which is the cause of **radiation proctitis** named in the dilemma. Notably, it is made only by the CAN versions.
 
 ### Summary
 
@@ -346,10 +374,10 @@ The prostate on these slices is only a few pixels, so the cases below use zoomed
 
 | Criterion | Result | Met? |
 |---|---|---|
-| 1. CAN prostate Dice ≥ 0.75 on test patients | 0.863 ± 0.015 (all CAN versions ≥ 0.855) | ✅ |
-| 2. Per-class Dice and IoU for both models on identical patient-level splits | Section 6.1, 4 models × 3 seeds, patient overlap asserted in code | ✅ |
-| 3. Prostate Dice for base, apex and edge slices vs central, plus 3–5 visualised failures | Section 6.2 and Section 7 (4 cases) | ✅ |
-| 4. Each model trains within one 8-hour Rangpur job; peak memory and inference time reported | 50–64 min per run; Section 6.4 | ✅ |
+| 1. CAN prostate Dice ≥ 0.75 on test patients | 0.863 ± 0.015 (all CAN versions ≥ 0.855) | Yes |
+| 2. Per-class Dice and IoU for both models on identical patient-level splits | Section 6.1, 4 models × 3 seeds, patient overlap asserted in code | Yes |
+| 3. Prostate Dice for base, apex and edge slices vs central, plus 3–5 visualised failures | Section 6.2 and Section 7 (4 cases) | Yes |
+| 4. Each model trains within one 8-hour Rangpur job; peak memory and inference time reported | 50–64 min per run; Section 6.4 | Yes |
 
 All four are met. The CAN passes the accuracy target, but it does not beat the baseline, which the review's risk table (Section 3.4) already treated as a valid finding to report with evidence.
 
@@ -357,12 +385,16 @@ All four are met. The CAN passes the accuracy target, but it does not beat the b
 
 1. **Use the 2D U-Net, not the CAN.** Across the three CAN versions, multi-scale context gave no measurable clinical gain at the prostate boundaries. Every version is less accurate at the rectum, the critical organ at risk, and draws false prostate past the real ends of the prostate. In the worst case found (Section 7, Case 4), that false prostate lies on the rectal wall, which in treatment would mean a rectal overdose. The CAN's advantages are its 23× smaller size, about half the inference memory, and faster inference. These do not matter for an offline contouring tool, and it needs 1.8× the GPU memory to train.
 2. **Do not automate the edge slices.** With every model, the first and last few prostate-bearing slices of each scan, plus the base and apex regions, need mandatory review by a specialist. The tool is suitable as a draft on central slices (Dice ≈ 0.91–0.92).
-3. **Next investment: inter-slice context, not more in-plane context.** The shared failures point to a 2.5D input (neighbouring slices as extra channels) or a 3D model as the next step, not a wider 2D context.
+3. **Next investment: inter-slice context, not more in-plane context.** The shared failures point to a 2.5D input or a 3D model as the next step, not a wider 2D context.
 4. **Caveat:** 3 test patients is a small sample. Validate on more patients before any clinical use.
 
 ## 9. Usage
 
-All commands run from this folder.
+**Setup.** All commands run from this folder.
+
+1. Install the packages: `pip install -r requirements.txt` (Python 3.11; versions in Section 10).
+2. Get the data. On Rangpur it is at `/home/groups/comp3710/HipMRI_Study_open/keras_slices_data`. Either copy that folder to `data/keras_slices_data/` here (the scripts' default; `data/` is git-ignored), or pass its location to any script with `--data-root <path>`. It must contain the six `keras_slices_*` folders listed at the top of [`dataset.py`](dataset.py).
+3. Training needs a GPU for practical run times: one 30-epoch run took 50–64 minutes on an A100. It also runs on Apple Silicon (MPS) or CPU, but much more slowly, so use `--limit` for quick tests there.
 
 ```bash
 # Check the data split and one batch
@@ -428,16 +460,45 @@ Install with `pip install -r requirements.txt`. These are the exact versions use
 **Reproducibility:**
 
 - `--seed` sets `torch.manual_seed`, which fixes weight initialisation, data order and augmentation. Results are reported over seeds 42, 1 and 2.
--
 - Every checkpoint stores its model name, constructor arguments, seed and epoch, so `predict.py` rebuilds the exact model.
 - Data and weights are not committed.
 
+**Reproducing the results.** Every number and figure in Sections 6 and 7 comes from these steps (about 12 GPU hours in total on an A100):
+
+```bash
+# 1. Train 4 models x 3 seeds (12 runs). Run names must match these, as plot_figures.py looks them up.
+for seed in 42 1 2; do
+  suffix=$([ $seed = 42 ] && echo "" || echo "_s$seed")
+  python train.py --model unet    --seed $seed --run-name unet$suffix
+  python train.py --model can     --seed $seed --run-name can$suffix
+  python train.py --model can     --seed $seed --run-name can_c128$suffix --base-channels 128
+  python train.py --model can_res --seed $seed --run-name can_res$suffix
+done
+
+# 2. Evaluate all 12 on the test set (tables in Sections 6.1, 6.2 and 6.4)
+python predict.py --out-dir runs/predict_all12 --checkpoints \
+  runs/{unet,can,can_c128,can_res}{,_s1,_s2}/best.pt
+
+# 3. Figures 7.1 and 7.2 use the four seed-42 models
+python predict.py --out-dir runs/predict_4models --checkpoints runs/{unet,can,can_c128,can_res}/best.pt
+cp runs/predict_4models/compare_worst.png runs/predict_4models/compare_worst_fp.png images/
+
+# 4. Draw the remaining README figures into images/
+python plot_figures.py --checkpoints runs/{unet,can,can_c128,can_res}/best.pt
+```
+
+On Rangpur, each training run can be submitted as a Slurm job instead, e.g. `MODEL=can SEED=1 RUN_NAME=can_s1 sbatch job_train.sh` (see the examples at the top of [`job_train.sh`](job_train.sh)). The script expects a Miniconda install at `~/miniconda3` with a conda environment named `torch` containing `requirements.txt`; edit the two `source`/`conda activate` lines if yours differs.
+
+Re-running gives very close but not bit-identical numbers, because GPU arithmetic is not fully deterministic. Small differences between machines are expected: for example, on a Mac the seed-42 U-Net gave the same Dice scores but one fewer single-pixel false-positive slice.
+
 ## 11. Artificial Intelligence Usage Disclosure
-     - Claude was used in this assignment to help with generation of code, comments and also testing and evaluation. AI-generation content was looked through manually, and results were checked to ensure its validity.
-    
+
+Tools used: Claude
+Tasks: writing and debugging the model, training and analysis scripts, running and monitoring Rangpur jobs, analysing results, visuals 
+Verification: Every model is checked by python modules.py (one forward and backward pass, output shape and parameter count). Each new model was smoke-tested on Rangpur (1 epoch on 500 slices) before full training. 
 ## 12. References
 
 1. O. Ronneberger, P. Fischer and T. Brox, "U-Net: Convolutional networks for biomedical image segmentation," in *Proc. MICCAI*, 2015, pp. 234–241.
 2. F. Yu and V. Koltun, "Multi-scale context aggregation by dilated convolutions," in *Proc. ICLR*, 2016.
-3. P. Wang, P. Chen, Y. Yuan, D. Liu, Z. Huang, X. Hou and G. Cottrell, "Understanding convolution for semantic segmentation," in *Proc. WACV*, 2018.
+3. P. Wang, P. Chen, Y. Yuan, D. Liu, Z. Huang, X. Hou and G. Cottrell, "Understanding convolution for semantic segmentation," in *Proc. WACV*, 2018, pp. 1451–1460.
 4. HipMRI Study for prostate cancer radiotherapy, 2D slices (`keras_slices_data`), provided by the COMP3710 teaching team at `/home/groups/comp3710/HipMRI_Study_open` on Rangpur. 38 patients; body, bone, bladder, rectum and prostate segmented by an MR physicist with more than 10 years of experience (COMP3710 Report specification, Appendix A).

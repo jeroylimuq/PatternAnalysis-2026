@@ -15,8 +15,7 @@ memory, and saves to --out-dir:
     compare_worst.png       the worst slices for every model side by side
     compare_worst_fp.png    the same for over-predictions
 
-The slices are coronal (iliac wings, femoral heads and shafts are visible,
-with the bladder directly above the prostate), so position is analysed on
+The slices are coronal (front to back), so position is analysed on
 two axes:
   * Superior-inferior runs within each slice. Per scan, the prostate's
     vertical extent is split into thirds: the superior third is the base
@@ -239,13 +238,16 @@ def measure_latency(model, dataset, device, n=50, warmup=5):
 
 
 def error_overlay(image, truth, pred):
-    """RGB image: prostate true positives green, false positives red, false negatives blue."""
+    """
+    RGB image: prostate true positives green, false positives red, false
+    negatives orange. 
+    """
     base = (image - image.min()) / (np.ptp(image) + 1e-8)
     rgb = np.stack([base] * 3, axis=-1) * 0.6
     gt, pr = truth == PROSTATE, pred == PROSTATE
     rgb[gt & pr] = [0.1, 0.9, 0.1]
     rgb[~gt & pr] = [1.0, 0.1, 0.1]
-    rgb[gt & ~pr] = [0.2, 0.4, 1.0]
+    rgb[gt & ~pr] = [1.0, 0.6, 0.0]
     return rgb
 
 
@@ -272,7 +274,7 @@ def plot_worst(name, idx, rows, images, truths, preds, path):
         show(axes[r, 1], truths[i], "ground truth", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
         show(axes[r, 2], preds[i], f"{name} prediction", cmap=LABEL_CMAP, vmin=0, vmax=NUM_CLASSES - 1)
         show(axes[r, 3], error_overlay(images[i], truths[i], preds[i]),
-             f"{error_title(row)}\nTP green, FP red, FN blue")
+             f"{error_title(row)}\nTP green, FP red, FN orange")
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
