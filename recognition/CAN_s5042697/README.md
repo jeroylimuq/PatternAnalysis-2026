@@ -493,9 +493,10 @@ Re-running gives very close but not bit-identical numbers, because GPU arithmeti
 
 ## 11. Artificial Intelligence Usage Disclosure
 
-Tools used: Claude
-Tasks: writing and debugging the model, training and analysis scripts, running and monitoring Rangpur jobs, analysing results, visuals 
-Verification: Every model is checked by python modules.py (one forward and backward pass, output shape and parameter count). Each new model was smoke-tested on Rangpur (1 epoch on 500 slices) before full training. 
+- **Tools used:** Claude
+- **Tasks:** writing and debugging the model, training and analysis scripts, running and monitoring Rangpur jobs, analysing results, visuals
+- **Verification:** Every model is checked by `python modules.py` (one forward and backward pass, output shape and parameter count). Each new model was smoke-tested on Rangpur (1 epoch on 500 slices) before full training.
+
 ## 12. References
 
 1. O. Ronneberger, P. Fischer and T. Brox, "U-Net: Convolutional networks for biomedical image segmentation," in *Proc. MICCAI*, 2015, pp. 234–241.
